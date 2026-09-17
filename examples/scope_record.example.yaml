@@ -1,0 +1,15 @@
+run_id: example-run-001
+targets:
+  - value: "192.0.2.0/24"
+  - value: "scan-target.example.com"
+authorization:
+  kind: self_attestation
+  reference_id: "asset-owner-attestation-2026-09-17"
+  attested_by: "asset-owner@example.com"
+  notes: "I own and control this infrastructure."
+time_window:
+  starts_at: "2026-09-17T00:00:00Z"
+  ends_at: "2026-09-18T00:00:00Z"
+allowed_categories:
+  - passive_recon
+  - port_scan

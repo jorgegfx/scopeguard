@@ -1,0 +1,17 @@
+passive:
+  description: "Read-only recon; no active packets beyond standard DNS/WHOIS lookups"
+  allowed_categories: ["passive_recon"]
+  max_concurrent_branches: 20
+  rate_limit_per_target_rps: 5
+
+recon_only:
+  description: "Active port/service discovery (nmap) but no vuln scanning or web-app testing"
+  allowed_categories: ["passive_recon", "port_scan", "service_enum"]
+  max_concurrent_branches: 10
+  rate_limit_per_target_rps: 3
+
+active:
+  description: "Full authorized testing: vuln scanning and web-app testing, still no exploitation"
+  allowed_categories: ["passive_recon", "port_scan", "service_enum", "vuln_scan", "webapp_test"]
+  max_concurrent_branches: 4
+  rate_limit_per_target_rps: 1
