@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import yaml
 
+from llm.client import ChatResult, LLMClient, ToolCall
 from orchestrator.run import start_run
 
 _EMPTY_NMAP_XML = '<?xml version="1.0"?><nmaprun><host></host></nmaprun>'
@@ -35,6 +36,19 @@ def _write_config(tmp_path, allowed_categories: list[str]):
                     "max_concurrent_branches": 2,
                     "rate_limit_per_target_rps": 0,
                 }
+            }
+        )
+    )
+    # Read eagerly by LLMClient() in start_run() regardless of profile --
+    # chat() itself is monkeypatched in the tests that exercise test_service,
+    # but the client is always constructed once per run (see RunState.llm_client).
+    (tmp_path / "config" / "llm.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "base_url": "http://localhost:1234/v1",
+                "model": "test-model",
+                "agents": {"service_tester": {"temperature": 0.1, "max_tool_calls": 6}},
+                "concurrency": {"max_concurrent_requests": 2},
             }
         )
     )
@@ -90,11 +104,41 @@ async def test_start_run_full_happy_path_produces_findings_and_report(monkeypatc
     monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
     monkeypatch.chdir(tmp_path)
 
+    # Deterministically drive the LLM tool-calling loop for the one
+    # discovered service: probe HTTP, report a finding from what it saw,
+    # then finish. Real reasoning is covered by tests/agents/service_tester;
+    # this just proves start_run wires LLMClient through to a real branch.
+    chat_calls = 0
+
+    async def fake_chat(self, agent_name, messages, tools=None):
+        nonlocal chat_calls
+        chat_calls += 1
+        if chat_calls == 1:
+            return ChatResult(content=None, tool_calls=[ToolCall(id="1", name="probe_http", arguments={})])
+        if chat_calls == 2:
+            assert "nginx" in messages[-1]["content"]
+            return ChatResult(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="2",
+                        name="report_finding",
+                        arguments={
+                            "title": "HTTP service on port 80",
+                            "severity": "info",
+                            "description": "nginx server responded",
+                        },
+                    )
+                ],
+            )
+        return ChatResult(content="done", tool_calls=[])
+
+    monkeypatch.setattr(LLMClient, "chat", fake_chat)
+
     scope_record_path = _write_config(tmp_path, ["port_scan", "service_enum", "vuln_scan", "webapp_test"])
 
     run_id = await start_run(str(scope_record_path))
 
     report_text = (tmp_path / "reports" / f"{run_id}.md").read_text(encoding="utf-8")
-    assert "Service enumeration for port 80" in report_text
     assert "HTTP service on port 80" in report_text
-    assert "nginx" in report_text
+    assert chat_calls == 3

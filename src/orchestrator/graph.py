@@ -16,12 +16,11 @@ from langgraph.types import Send
 
 from agents.recon.agent import ReconAgent
 from agents.report.agent import ReportAgent
-from agents.service_enum.agent import ServiceEnumAgent
-from agents.vuln_scan.agent import VulnScanAgent
-from agents.webapp.agent import WebAppAgent
+from agents.service_tester.agent import ServiceTesterAgent, ToolSpec
 from audit.log import AuditLogger
-from orchestrator.state import Finding, RunState, ServiceFinding, ServiceTarget
+from orchestrator.state import RunState, ServiceFinding, ServiceTarget
 from scope.models import ScopeRecord, TestCategory
+from tools import curl, nmap
 from tools.base import ToolExecutor
 
 logger = logging.getLogger(__name__)
@@ -43,13 +42,21 @@ async def recon_node(state: RunState) -> dict:
 
     logger.info("recon: starting against %d target(s)", len(scope_record.targets))
     discovered: list[ServiceTarget] = []
+    recon_failures: list[ServiceFinding] = []
     for scope_target in scope_record.targets:
-        found = await agent.run(executor, scope_target.value)
+        try:
+            found = await agent.run(executor, scope_target.value)
+        except Exception as exc:  # noqa: BLE001 -- one target's recon failure must not cancel the rest
+            logger.warning("recon: %s failed: %s", scope_target.value, exc)
+            recon_failures.append(
+                {"target": scope_target.value, "port": 0, "category": "recon", "findings": [], "error": str(exc)}
+            )
+            continue
         logger.info("recon: %s -> %d open port(s)", scope_target.value, len(found))
         discovered.extend(found)
 
     logger.info("recon: done, %d service(s) discovered total", len(discovered))
-    return {"discovered_services": discovered}
+    return {"discovered_services": discovered, "service_findings": recon_failures}
 
 
 def fan_out_to_service_testers(state: RunState) -> list[Send]:
@@ -70,14 +77,69 @@ def _looks_like_http(port: int, service: str | None) -> bool:
     return bool(service) and "http" in service.lower()
 
 
-async def _run_category(category: TestCategory, target: str, port: int, run_agent) -> ServiceFinding:
+def _build_service_tool_specs(
+    executor: ToolExecutor, scope_record: ScopeRecord, target: str, port: int, service: str | None
+) -> list[ToolSpec]:
+    specs: list[ToolSpec] = []
+
+    if scope_record.category_allowed(TestCategory.SERVICE_ENUM):
+        specs.append(
+            ToolSpec(
+                name="enumerate_service",
+                description=f"Run nmap's default scripts (-sC) against {target}:{port} for deeper fingerprinting.",
+                category=TestCategory.SERVICE_ENUM.value,
+                handler=lambda: nmap.enumerate_service(executor, target, port),
+            )
+        )
+
+    if scope_record.category_allowed(TestCategory.VULN_SCAN):
+        specs.append(
+            ToolSpec(
+                name="scan_vulnerabilities",
+                description=f"Run nmap's `vuln` NSE script category against {target}:{port} (known-CVE matching).",
+                category=TestCategory.VULN_SCAN.value,
+                handler=lambda: nmap.scan_vulnerabilities(executor, target, port),
+            )
+        )
+
+    if scope_record.category_allowed(TestCategory.WEBAPP_TEST) and _looks_like_http(port, service):
+        scheme = "https" if port == 443 else "http"
+        specs.append(
+            ToolSpec(
+                name="probe_http",
+                description=f"Fetch headers/title via a passive GET to {scheme}://{target}:{port}/.",
+                category=TestCategory.WEBAPP_TEST.value,
+                handler=lambda: _probe_http_text(executor, target, port, scheme),
+            )
+        )
+
+    return specs
+
+
+async def _probe_http_text(executor: ToolExecutor, target: str, port: int, scheme: str) -> str:
+    result = await curl.probe(executor, target, port, scheme=scheme)
+    lines = [f"url: {result.url}"]
+    if result.status_line:
+        lines.append(f"status: {result.status_line}")
+    if result.server_header:
+        lines.append(f"server: {result.server_header}")
+    if result.title:
+        lines.append(f"title: {result.title}")
+    lines.append("raw headers:")
+    lines.append(result.raw_headers)
+    return "\n".join(lines)
+
+
+async def _run_reasoning(
+    agent: ServiceTesterAgent, target: str, port: int, service: str | None, tool_specs: list[ToolSpec]
+) -> ServiceFinding:
     try:
-        findings: list[Finding] = await run_agent()
-        logger.info("[%s:%d] %s: %d finding(s)", target, port, category.value, len(findings))
-        return {"target": target, "port": port, "category": category.value, "findings": findings, "error": None}
-    except Exception as exc:  # noqa: BLE001 -- one branch's failure must not cancel its siblings
-        logger.warning("[%s:%d] %s failed: %s", target, port, category.value, exc)
-        return {"target": target, "port": port, "category": category.value, "findings": [], "error": str(exc)}
+        findings = await agent.run(target, port, service, tool_specs)
+        logger.info("[%s:%d] llm_reasoning: %d finding(s)", target, port, len(findings))
+        return {"target": target, "port": port, "category": "llm_reasoning", "findings": findings, "error": None}
+    except Exception as exc:  # noqa: BLE001 -- LM Studio down/etc must fail closed for this branch only
+        logger.warning("[%s:%d] llm_reasoning failed: %s", target, port, exc)
+        return {"target": target, "port": port, "category": "llm_reasoning", "findings": [], "error": str(exc)}
 
 
 async def test_service_node(state: RunState) -> dict:
@@ -95,31 +157,15 @@ async def test_service_node(state: RunState) -> dict:
     )
 
     logger.info("test_service: [%s:%d] service=%s", target, port, service)
-    results: list[ServiceFinding] = []
 
-    if scope_record.category_allowed(TestCategory.SERVICE_ENUM):
-        agent = ServiceEnumAgent(agent_name="service_enum")
-        results.append(
-            await _run_category(
-                TestCategory.SERVICE_ENUM, target, port, lambda: agent.run(executor, target, port, service)
-            )
-        )
+    tool_specs = _build_service_tool_specs(executor, scope_record, target, port, service)
+    if not tool_specs:
+        logger.info("test_service: [%s:%d] no authorized categories for this service, skipping", target, port)
+        return {"service_findings": []}
 
-    if scope_record.category_allowed(TestCategory.VULN_SCAN):
-        agent = VulnScanAgent(agent_name="vuln_scan")
-        results.append(
-            await _run_category(
-                TestCategory.VULN_SCAN, target, port, lambda: agent.run(executor, target, port, service)
-            )
-        )
-
-    if scope_record.category_allowed(TestCategory.WEBAPP_TEST) and _looks_like_http(port, service):
-        agent = WebAppAgent(agent_name="webapp")
-        results.append(
-            await _run_category(TestCategory.WEBAPP_TEST, target, port, lambda: agent.run(executor, target, port))
-        )
-
-    return {"service_findings": results}
+    agent = ServiceTesterAgent(agent_name="service_tester", llm_client=state["llm_client"])
+    result = await _run_reasoning(agent, target, port, service, tool_specs)
+    return {"service_findings": [result]}
 
 
 async def report_node(state: RunState) -> dict:

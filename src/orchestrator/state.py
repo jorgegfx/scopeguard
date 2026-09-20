@@ -9,6 +9,7 @@ from typing import Annotated, NotRequired, TypedDict
 
 from pydantic import BaseModel
 
+from llm.client import LLMClient
 from scope.models import ScopeRecord
 from tools.rate_limit import RateLimiter
 
@@ -55,5 +56,10 @@ class RunState(TypedDict):
     # scan profile's concurrency cap and rate limit are actually enforced.
     tool_semaphore: Semaphore
     rate_limiter: RateLimiter
+    # One LLMClient shared across every branch -- its internal semaphore is
+    # what actually bounds concurrent LM Studio requests, so constructing a
+    # fresh client per branch would defeat that (see CLAUDE.md "LM Studio
+    # concurrency").
+    llm_client: LLMClient
     # Only present on a Send-spawned test_service branch.
     target_service: NotRequired[ServiceTarget]

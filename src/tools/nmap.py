@@ -9,6 +9,12 @@ from dataclasses import dataclass
 from scope.models import TestCategory
 from tools.base import ToolExecutor
 
+# ToolExecutor's default timeout (120s) is tuned for quick commands like curl,
+# not nmap -- a single-host -sV run has been observed taking ~785s in
+# practice. Use a longer, nmap-specific default so real scans don't get
+# killed mid-run and misreported as recon failures.
+NMAP_TIMEOUT_SECONDS = 1200.0
+
 
 @dataclass
 class OpenPort:
@@ -24,6 +30,7 @@ async def scan_target(executor: ToolExecutor, target: str) -> list[OpenPort]:
         target=target,
         category=TestCategory.PORT_SCAN,
         command=["nmap", "-sV", "-oX", "-", target],
+        timeout=NMAP_TIMEOUT_SECONDS,
     )
     return _parse_nmap_xml(result.stdout)
 
@@ -35,6 +42,7 @@ async def enumerate_service(executor: ToolExecutor, target: str, port: int) -> s
         target=target,
         category=TestCategory.SERVICE_ENUM,
         command=["nmap", "-p", str(port), "-sC", "-oN", "-", target],
+        timeout=NMAP_TIMEOUT_SECONDS,
     )
     return result.stdout
 
@@ -46,6 +54,7 @@ async def scan_vulnerabilities(executor: ToolExecutor, target: str, port: int) -
         target=target,
         category=TestCategory.VULN_SCAN,
         command=["nmap", "-p", str(port), "--script", "vuln", "-oN", "-", target],
+        timeout=NMAP_TIMEOUT_SECONDS,
     )
     return result.stdout
 

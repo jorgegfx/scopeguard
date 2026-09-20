@@ -12,6 +12,7 @@ import logging
 import uuid
 
 from audit.log import AuditLogger
+from llm.client import LLMClient
 from orchestrator.graph import build_graph
 from orchestrator.profiles import load_scan_profile
 from scope.loader import load_scope_record
@@ -25,6 +26,8 @@ async def start_run(scope_record_path: str, profile_name: str = "recon_only") ->
     scope_record = load_scope_record(scope_record_path)
     scan_profile = load_scan_profile(profile_name)
     audit_logger = AuditLogger(run_id=run_id)
+    # Constructed once and shared across every branch -- see RunState.llm_client.
+    llm_client = LLMClient()
 
     logger.info(
         "run %s: starting (profile=%s, targets=%d, max_concurrent_branches=%d, rate_limit_rps=%s)",
@@ -48,6 +51,7 @@ async def start_run(scope_record_path: str, profile_name: str = "recon_only") ->
             "report": None,
             "tool_semaphore": asyncio.Semaphore(scan_profile.max_concurrent_branches),
             "rate_limiter": RateLimiter(requests_per_second=scan_profile.rate_limit_per_target_rps),
+            "llm_client": llm_client,
         }
     )
 
