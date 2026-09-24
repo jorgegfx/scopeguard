@@ -18,6 +18,11 @@ class ServiceTarget(TypedDict):
     target: str
     port: int
     service: str | None
+    # product/version come from nmap -sV and feed the CVE-lookup tool
+    # (tools.cve_lookup). NotRequired so older callers/tests that build a
+    # ServiceTarget without them stay valid.
+    product: NotRequired[str | None]
+    version: NotRequired[str | None]
 
 
 class Severity(str, Enum):

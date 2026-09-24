@@ -15,3 +15,9 @@ active:
   allowed_categories: ["passive_recon", "port_scan", "service_enum", "vuln_scan", "webapp_test"]
   max_concurrent_branches: 4
   rate_limit_per_target_rps: 1
+
+active_plus_content:
+  description: "As 'active', plus directory/path content discovery (noisier -- more requests per host)"
+  allowed_categories: ["passive_recon", "port_scan", "service_enum", "vuln_scan", "webapp_test", "content_discovery"]
+  max_concurrent_branches: 2
+  rate_limit_per_target_rps: 1

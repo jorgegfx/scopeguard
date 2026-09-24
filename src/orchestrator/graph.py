@@ -20,12 +20,20 @@ from agents.service_tester.agent import ServiceTesterAgent, ToolSpec
 from audit.log import AuditLogger
 from orchestrator.state import RunState, ServiceFinding, ServiceTarget
 from scope.models import ScopeRecord, TestCategory
-from tools import curl, nmap
+from tools import content_discovery, curl, cve_lookup, http_headers, nikto, nmap, nuclei, passive_recon, tls
 from tools.base import ToolExecutor
 
 logger = logging.getLogger(__name__)
 
 _HTTP_PORTS = {80, 443, 8000, 8080, 8443, 8888}
+# Ports we treat as TLS-wrapped, so probes use https:// and the TLS scanner is
+# offered. Previously only 443 was recognised, so an HTTPS service on 8443 was
+# probed over plain http:// -- fixed here.
+_HTTPS_PORTS = {443, 8443}
+
+
+def _scheme_for(port: int) -> str:
+    return "https" if port in _HTTPS_PORTS else "http"
 
 
 async def recon_node(state: RunState) -> dict:
@@ -78,9 +86,26 @@ def _looks_like_http(port: int, service: str | None) -> bool:
 
 
 def _build_service_tool_specs(
-    executor: ToolExecutor, scope_record: ScopeRecord, target: str, port: int, service: str | None
+    executor: ToolExecutor, scope_record: ScopeRecord, service_target: ServiceTarget
 ) -> list[ToolSpec]:
+    target = service_target["target"]
+    port = service_target["port"]
+    service = service_target["service"]
+    product = service_target.get("product")
+    version = service_target.get("version")
+    scheme = _scheme_for(port)
+    is_http = _looks_like_http(port, service)
     specs: list[ToolSpec] = []
+
+    if scope_record.category_allowed(TestCategory.PASSIVE_RECON):
+        specs.append(
+            ToolSpec(
+                name="resolve_dns",
+                description=f"Resolve DNS records for {target} (passive nslookup).",
+                category=TestCategory.PASSIVE_RECON.value,
+                handler=lambda: _passive_recon_text(executor, target),
+            )
+        )
 
     if scope_record.category_allowed(TestCategory.SERVICE_ENUM):
         specs.append(
@@ -101,15 +126,82 @@ def _build_service_tool_specs(
                 handler=lambda: nmap.scan_vulnerabilities(executor, target, port),
             )
         )
+        if product and version:
+            specs.append(
+                ToolSpec(
+                    name="lookup_known_cves",
+                    description=(
+                        f"Look up published CVEs for the detected version "
+                        f"'{product} {version}' in the NVD database (advisory; may include false positives)."
+                    ),
+                    category=TestCategory.VULN_SCAN.value,
+                    handler=lambda: _cve_lookup_text(product, version),
+                )
+            )
+        if is_http:
+            specs.append(
+                ToolSpec(
+                    name="scan_web_templates",
+                    description=(
+                        f"Run nuclei's default (non-intrusive) templates against {scheme}://{target}:{port}/ "
+                        "to detect known CVEs, misconfigurations and exposed files/panels."
+                    ),
+                    category=TestCategory.VULN_SCAN.value,
+                    handler=lambda: _nuclei_text(executor, target, port, scheme),
+                )
+            )
+            specs.append(
+                ToolSpec(
+                    name="scan_web_server",
+                    description=f"Run Nikto against {scheme}://{target}:{port}/ for known web-server issues.",
+                    category=TestCategory.VULN_SCAN.value,
+                    handler=lambda: _nikto_text(executor, target, port),
+                )
+            )
+        if port in _HTTPS_PORTS:
+            specs.append(
+                ToolSpec(
+                    name="scan_tls",
+                    description=(
+                        f"Assess the TLS configuration on {target}:{port} (weak protocols/ciphers, "
+                        "certificate problems) with sslscan."
+                    ),
+                    category=TestCategory.VULN_SCAN.value,
+                    handler=lambda: _tls_text(executor, target, port),
+                )
+            )
 
-    if scope_record.category_allowed(TestCategory.WEBAPP_TEST) and _looks_like_http(port, service):
-        scheme = "https" if port == 443 else "http"
+    if scope_record.category_allowed(TestCategory.WEBAPP_TEST) and is_http:
         specs.append(
             ToolSpec(
                 name="probe_http",
                 description=f"Fetch headers/title via a passive GET to {scheme}://{target}:{port}/.",
                 category=TestCategory.WEBAPP_TEST.value,
                 handler=lambda: _probe_http_text(executor, target, port, scheme),
+            )
+        )
+        specs.append(
+            ToolSpec(
+                name="check_security_headers",
+                description=(
+                    f"Fetch {scheme}://{target}:{port}/ and report missing security headers, "
+                    "insecure cookie flags and version disclosure."
+                ),
+                category=TestCategory.WEBAPP_TEST.value,
+                handler=lambda: _security_headers_text(executor, target, port, scheme),
+            )
+        )
+
+    if scope_record.category_allowed(TestCategory.CONTENT_DISCOVERY) and is_http:
+        specs.append(
+            ToolSpec(
+                name="discover_content",
+                description=(
+                    f"Brute-force a small wordlist of common paths against {scheme}://{target}:{port}/ "
+                    "(directory/file discovery; noisier than a single probe)."
+                ),
+                category=TestCategory.CONTENT_DISCOVERY.value,
+                handler=lambda: _content_discovery_text(executor, target, port, scheme),
             )
         )
 
@@ -128,6 +220,80 @@ async def _probe_http_text(executor: ToolExecutor, target: str, port: int, schem
     lines.append("raw headers:")
     lines.append(result.raw_headers)
     return "\n".join(lines)
+
+
+async def _security_headers_text(executor: ToolExecutor, target: str, port: int, scheme: str) -> str:
+    result = await curl.probe(executor, target, port, scheme=scheme)
+    issues = http_headers.analyze(result.raw_headers, is_https=(scheme == "https"))
+    if not issues:
+        return f"No security-header issues found on {result.url}."
+    lines = [f"Security-header findings for {result.url}:"]
+    lines.extend(f"- [{issue.severity.value}] {issue.summary}" for issue in issues)
+    return "\n".join(lines)
+
+
+async def _nuclei_text(executor: ToolExecutor, target: str, port: int, scheme: str) -> str:
+    results = await nuclei.scan(executor, target, port, scheme=scheme)
+    if not results:
+        return f"nuclei: no templates matched on {scheme}://{target}:{port}/."
+    lines = [f"nuclei matches on {scheme}://{target}:{port}/:"]
+    for r in results:
+        cve = f" {', '.join(r.cve_ids)}" if r.cve_ids else ""
+        cvss = f" cvss={r.cvss_score}" if r.cvss_score is not None else ""
+        lines.append(f"- [{r.severity}] {r.name} ({r.template_id}){cve}{cvss} @ {r.matched_at}")
+    return "\n".join(lines)
+
+
+async def _nikto_text(executor: ToolExecutor, target: str, port: int) -> str:
+    items = await nikto.scan(executor, target, port)
+    if not items:
+        return f"nikto: no items reported for {target}:{port}."
+    lines = [f"nikto items for {target}:{port}:"]
+    lines.extend(f"- {item.description}" + (f" ({item.uri})" if item.uri else "") for item in items)
+    return "\n".join(lines)
+
+
+async def _tls_text(executor: ToolExecutor, target: str, port: int) -> str:
+    result = await tls.scan(executor, target, port)
+    if not result.has_issues:
+        return f"TLS configuration on {target}:{port} looks clean (no weak protocols/ciphers/cert issues)."
+    lines = [f"TLS issues on {target}:{port}:"]
+    for label, values in (
+        ("weak protocols", result.weak_protocols),
+        ("weak ciphers", result.weak_ciphers),
+        ("certificate", result.certificate_issues),
+    ):
+        for value in values:
+            lines.append(f"- {label}: {value}")
+    return "\n".join(lines)
+
+
+async def _content_discovery_text(executor: ToolExecutor, target: str, port: int, scheme: str) -> str:
+    found = await content_discovery.scan(executor, target, port, scheme=scheme)
+    if not found:
+        return f"content discovery: no listed paths responded on {scheme}://{target}:{port}/."
+    lines = [f"Discovered paths on {scheme}://{target}:{port}/:"]
+    lines.extend(f"- /{p.path} -> {p.status} ({p.length} bytes)" for p in found)
+    return "\n".join(lines)
+
+
+async def _cve_lookup_text(product: str, version: str) -> str:
+    matches = await cve_lookup.lookup(product, version)
+    if not matches:
+        return f"No NVD CVEs matched '{product} {version}'."
+    lines = [f"NVD CVEs associated with '{product} {version}' (advisory -- verify before acting):"]
+    for m in matches:
+        score = f" cvss={m.cvss_score}" if m.cvss_score is not None else ""
+        sev = f" [{m.severity}]" if m.severity else ""
+        lines.append(f"- {m.cve_id}{sev}{score}: {m.description[:160]}")
+    return "\n".join(lines)
+
+
+async def _passive_recon_text(executor: ToolExecutor, target: str) -> str:
+    result = await passive_recon.resolve_dns(executor, target)
+    if not result.addresses:
+        return f"DNS: no addresses resolved for {target}."
+    return f"DNS addresses for {target}: {', '.join(result.addresses)}"
 
 
 async def _run_reasoning(
@@ -158,7 +324,7 @@ async def test_service_node(state: RunState) -> dict:
 
     logger.info("test_service: [%s:%d] service=%s", target, port, service)
 
-    tool_specs = _build_service_tool_specs(executor, scope_record, target, port, service)
+    tool_specs = _build_service_tool_specs(executor, scope_record, svc)
     if not tool_specs:
         logger.info("test_service: [%s:%d] no authorized categories for this service, skipping", target, port)
         return {"service_findings": []}

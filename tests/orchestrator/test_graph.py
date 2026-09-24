@@ -61,8 +61,8 @@ async def test_recon_node_discovers_services_across_all_scope_targets(monkeypatc
     result = await scan_graph.recon_node(_base_state(scope_record))
 
     assert result["discovered_services"] == [
-        {"target": "10.0.0.5", "port": 22, "service": "ssh"},
-        {"target": "10.0.0.9", "port": 22, "service": "ssh"},
+        {"target": "10.0.0.5", "port": 22, "service": "ssh", "product": None, "version": None},
+        {"target": "10.0.0.9", "port": 22, "service": "ssh", "product": None, "version": None},
     ]
 
 
@@ -78,7 +78,9 @@ async def test_recon_node_isolates_a_failing_target(monkeypatch, tmp_path):
     scope_record = _scope_record()
     result = await scan_graph.recon_node(_base_state(scope_record))
 
-    assert result["discovered_services"] == [{"target": "10.0.0.9", "port": 22, "service": "ssh"}]
+    assert result["discovered_services"] == [
+        {"target": "10.0.0.9", "port": 22, "service": "ssh", "product": None, "version": None}
+    ]
     assert result["service_findings"] == [
         {
             "target": "10.0.0.5",
@@ -108,7 +110,14 @@ async def test_test_service_node_exposes_only_authorized_tools_to_the_llm(monkey
 
     result = await scan_graph.test_service_node(state)
 
-    assert set(captured_tool_names) == {"enumerate_service", "scan_vulnerabilities", "probe_http"}
+    assert set(captured_tool_names) == {
+        "enumerate_service",
+        "scan_vulnerabilities",
+        "scan_web_templates",
+        "scan_web_server",
+        "probe_http",
+        "check_security_headers",
+    }
     assert result["service_findings"] == [
         {
             "target": "10.0.0.5",

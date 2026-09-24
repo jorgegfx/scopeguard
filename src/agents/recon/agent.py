@@ -18,6 +18,12 @@ class ReconAgent(Agent):
     async def run(self, executor: ToolExecutor, target: str) -> list[ServiceTarget]:
         open_ports = await nmap.scan_target(executor, target)
         return [
-            ServiceTarget(target=target, port=p.port, service=p.service)
+            ServiceTarget(
+                target=target,
+                port=p.port,
+                service=p.service,
+                product=p.product,
+                version=p.version,
+            )
             for p in open_ports
         ]

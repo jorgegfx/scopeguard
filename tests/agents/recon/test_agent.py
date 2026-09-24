@@ -20,8 +20,8 @@ async def test_run_maps_open_ports_to_service_targets(monkeypatch):
     result = await agent.run(_FakeExecutor(), "10.0.0.5")
 
     assert result == [
-        {"target": "10.0.0.5", "port": 22, "service": "ssh"},
-        {"target": "10.0.0.5", "port": 443, "service": "https"},
+        {"target": "10.0.0.5", "port": 22, "service": "ssh", "product": "OpenSSH", "version": "8.9"},
+        {"target": "10.0.0.5", "port": 443, "service": "https", "product": None, "version": None},
     ]
 
 

@@ -15,6 +15,11 @@ class TestCategory(str, Enum):
     SERVICE_ENUM = "service_enum"
     VULN_SCAN = "vuln_scan"
     WEBAPP_TEST = "webapp_test"
+    # Directory/path brute-forcing sends noticeably more requests than a
+    # single passive probe, so it's its own gated category rather than being
+    # folded into webapp_test -- a scope record can allow header inspection
+    # without also allowing content brute-forcing.
+    CONTENT_DISCOVERY = "content_discovery"
 
 
 class AuthorizationArtifact(BaseModel):

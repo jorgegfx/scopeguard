@@ -33,7 +33,14 @@ project is built around.
 - [`uv`](https://docs.astral.sh/uv/) for environment/dependency management
 - [LM Studio](https://lmstudio.ai) running locally, for future LLM-backed
   sub-agents (nothing in the current pipeline calls it yet)
-- `nmap` and `curl` on `PATH` — every scan/probe tool wrapper shells out to one of these, gated through `scope.checker`
+- Scanner binaries on `PATH` — every scan/probe tool wrapper shells out to
+  one of these, gated through `scope.checker`. `nmap`, `curl` and `nslookup`
+  are required; `nuclei`, `nikto`, `sslscan` and `ffuf` are optional and
+  only needed for the tools that use them (a run whose scope record doesn't
+  enable those categories, or a service tester that never selects them,
+  won't invoke a missing binary). Version→CVE lookup (`tools.cve_lookup`)
+  and certificate-transparency subdomain discovery (`tools.passive_recon`)
+  call public web APIs (NVD, crt.sh) rather than a local binary.
 
 ## Getting started
 
@@ -97,6 +104,13 @@ scopeguard/
 | `audit.log` | Implemented |
 | `tools.base` | Implemented, tested — async, semaphore-bounded, rate-limited `ToolExecutor` |
 | `tools.nmap` / `tools.curl` | Implemented, tested |
+| `tools.nuclei` | Implemented, tested — templated CVE/misconfig detection, JSONL parsed (`vuln_scan`) |
+| `tools.tls` | Implemented, tested — sslscan weak-protocol/cipher/cert checks (`vuln_scan`) |
+| `tools.nikto` | Implemented, tested — web-server issue scan, XML parsed (`vuln_scan`) |
+| `tools.cve_lookup` | Implemented, tested — nmap version string → NVD CVEs (external API, advisory) |
+| `tools.http_headers` | Implemented, tested — security-header/cookie/disclosure analysis (`webapp_test`) |
+| `tools.content_discovery` | Implemented, tested — ffuf path brute-force (`content_discovery` category) |
+| `tools.passive_recon` | Implemented, tested — nslookup (`passive_recon`) + crt.sh subdomains (external API) |
 | `orchestrator.profiles` | Implemented, tested — loads `config/scan_profiles.yaml` |
 | `agents.recon` | Implemented, tested — nmap port/service discovery |
 | `agents.service_enum` | Implemented, tested — nmap `-sC` default scripts |
@@ -127,9 +141,11 @@ the suite.
 - No LLM-driven reasoning anywhere yet -- every agent is a fixed
   tool-output parser. The LLM's intended role (deciding what to probe next,
   writing an executive summary, etc.) hasn't been built.
-- `vuln_scan`'s CVE matching is nmap's `vuln` NSE script category, not a
-  real CVE/CPE database lookup -- fine as a v1, but coverage is only as
-  good as whatever NSE scripts happen to run.
+- `vuln_scan` now spans nmap `vuln` NSE scripts, nuclei templates, Nikto,
+  sslscan (TLS) and an NVD version→CVE lookup. The NVD lookup is a keyword
+  match on the nmap version string, so it's advisory (back-ported/distro
+  patches can make it a false positive) rather than a confirmed CPE match --
+  a proper CPE-based query is still worth doing.
 - Per-run concurrency tuning against real LM Studio throughput (moot until
   an agent actually calls the LLM).
 
