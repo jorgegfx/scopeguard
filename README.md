@@ -38,9 +38,98 @@ project is built around.
   are required; `nuclei`, `nikto`, `sslscan` and `ffuf` are optional and
   only needed for the tools that use them (a run whose scope record doesn't
   enable those categories, or a service tester that never selects them,
-  won't invoke a missing binary). Version→CVE lookup (`tools.cve_lookup`)
-  and certificate-transparency subdomain discovery (`tools.passive_recon`)
-  call public web APIs (NVD, crt.sh) rather than a local binary.
+  won't invoke a missing binary). `ffuf` backs both content discovery and
+  the webshell/backdoor sweep (`tools.webshell`), which also uses `curl` to
+  fetch and fingerprint candidate shell pages. Version→CVE lookup
+  (`tools.cve_lookup`) and certificate-transparency subdomain discovery
+  (`tools.passive_recon`) call public web APIs (NVD, crt.sh) rather than a
+  local binary.
+
+## Installing the requirements (step by step)
+
+The commands below are Windows-first (this is where the project is
+developed); Linux/macOS equivalents follow each step. Nothing here needs to
+run as administrator except the package-manager installs.
+
+**1. Install `uv`** (Python environment + dependency manager — the only one
+this project uses):
+
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+```bash
+# Linux / macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+`uv` bootstraps a compatible Python (3.11+) itself, so a separate Python
+install is optional. Verify with `uv --version`.
+
+**2. Sync the Python dependencies** (creates `.venv/` and installs
+everything from `pyproject.toml` / `uv.lock`):
+
+```bash
+uv sync
+```
+
+**3. Install the scanner binaries** so the tool wrappers can shell out to
+them. On Windows, [Chocolatey](https://chocolatey.org/install) covers most:
+
+```powershell
+# Windows (PowerShell, admin) — via Chocolatey
+choco install nmap curl -y          # nmap + curl (nslookup ships with Windows)
+choco install ffuf nuclei -y        # content discovery + webshell sweep + templates
+# nikto and sslscan have no maintained choco package — see the notes below
+```
+
+```bash
+# Debian / Ubuntu
+sudo apt update
+sudo apt install -y nmap curl dnsutils nikto sslscan   # dnsutils provides nslookup
+# ffuf + nuclei are Go tools — install via Go (step 4) or download a release binary
+```
+
+```bash
+# macOS (Homebrew)
+brew install nmap curl bind nikto sslscan ffuf nuclei  # bind provides nslookup
+```
+
+**4. Install the Go-based scanners (`ffuf`, `nuclei`) if your package
+manager doesn't carry them.** Install [Go](https://go.dev/dl/), then:
+
+```bash
+go install github.com/ffuf/ffuf/v2@latest
+go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+```
+
+Make sure `%USERPROFILE%\go\bin` (Windows) or `$HOME/go/bin` (Linux/macOS)
+is on your `PATH`. After installing `nuclei`, run `nuclei -update-templates`
+once to pull its detection templates (including the webshell/backdoor ones).
+
+> **Windows notes for `nikto` and `sslscan`:** both are easiest under WSL
+> (`wsl --install`, then use the Debian/Ubuntu commands above) or Git Bash
+> with Perl for `nikto`. They're optional — a scan only invokes them when
+> the scope record enables `vuln_scan` and the service tester selects them.
+
+**5. Install [LM Studio](https://lmstudio.ai)** and start its local server
+(the OpenAI-compatible endpoint on `http://localhost:1234/v1` by default),
+then load a model. Point `config/llm.yaml` at it (base URL + model name).
+Only the LLM-driven service tester needs this; the deterministic tool
+wrappers run without it.
+
+**6. Verify everything resolves:**
+
+```bash
+uv run pytest                                   # the suite should pass
+nmap --version && curl --version                # required binaries
+ffuf -V && nuclei -version                       # optional (content/webshell/templates)
+nikto -Version && sslscan --version              # optional (vuln_scan)
+```
+
+Any optional binary you skip simply means the tools that use it are
+unavailable; the rest of the pipeline still runs.
 
 ## Getting started
 
@@ -110,6 +199,7 @@ scopeguard/
 | `tools.cve_lookup` | Implemented, tested — nmap version string → NVD CVEs (external API, advisory) |
 | `tools.http_headers` | Implemented, tested — security-header/cookie/disclosure analysis (`webapp_test`) |
 | `tools.content_discovery` | Implemented, tested — ffuf path brute-force (`content_discovery` category) |
+| `tools.webshell` | Implemented, tested — remote PHP/Apache backdoor detection: ffuf sweep of known shell paths + curl body-signature validation (`webshell_scan` category) |
 | `tools.passive_recon` | Implemented, tested — nslookup (`passive_recon`) + crt.sh subdomains (external API) |
 | `orchestrator.profiles` | Implemented, tested — loads `config/scan_profiles.yaml` |
 | `agents.recon` | Implemented, tested — nmap port/service discovery |
@@ -146,6 +236,12 @@ the suite.
   match on the nmap version string, so it's advisory (back-ported/distro
   patches can make it a false positive) rather than a confirmed CPE match --
   a proper CPE-based query is still worth doing.
+- Webshell/backdoor detection (`webshell_scan`) is black-box only: it probes
+  a curated wordlist of known shell paths and fingerprints response bodies.
+  The wordlist and signature set are intentionally small/precise; broadening
+  either (or adding host-side scanning like YARA/ClamAV, which would need
+  file-system access to the target and so a different authorization model)
+  is a deliberate next step, not an accident of the current scope.
 - Per-run concurrency tuning against real LM Studio throughput (moot until
   an agent actually calls the LLM).
 

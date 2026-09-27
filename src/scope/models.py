@@ -20,6 +20,13 @@ class TestCategory(str, Enum):
     # folded into webapp_test -- a scope record can allow header inspection
     # without also allowing content brute-forcing.
     CONTENT_DISCOVERY = "content_discovery"
+    # Hunting for already-installed web backdoors (attacker-planted PHP
+    # shells) probes a wordlist of known shell paths and fetches their
+    # bodies, so it's noisier than a single probe and semantically distinct
+    # from generic vuln scanning -- kept its own gated category for the same
+    # reason as content_discovery: a scope record can enable a vuln scan
+    # without also enabling a backdoor sweep.
+    WEBSHELL_SCAN = "webshell_scan"
 
 
 class AuthorizationArtifact(BaseModel):

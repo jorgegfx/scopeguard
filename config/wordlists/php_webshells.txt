@@ -1,0 +1,57 @@
+# Known PHP webshell / backdoor paths.
+#
+# This is a DETECTION wordlist: filenames commonly used by attacker-planted
+# PHP web backdoors (c99, r57, WSO, b374k, ...) and the directories they are
+# typically dropped into (uploads/, images/, tmp/). tools.webshell requests
+# each path and fingerprints the response body to validate whether a real
+# shell is present -- it never uploads or interacts with one.
+#
+# Kept intentionally small and conservative (CLAUDE.md): a bigger list means
+# more requests against a target whose blast radius the operator may not
+# fully understand. Lines starting with '#' and blank lines are ignored.
+#
+# Classic named shells at the web root
+c99.php
+c99shell.php
+r57.php
+r57shell.php
+wso.php
+b374k.php
+b374k-shell.php
+shell.php
+webshell.php
+cmd.php
+backdoor.php
+indoxploit.php
+alfa.php
+alfashell.php
+marijuana.php
+mini.php
+priv8.php
+0byt3m1n1.php
+adminer.php
+up.php
+upload.php
+uploader.php
+gel4y.php
+madspot.php
+sym.php
+symlink.php
+# Disguised / double-extension droppers
+shell.phtml
+shell.php5
+shell.php7
+shell.pht
+image.php.jpg
+# Same names inside the usual writable drop directories
+uploads/shell.php
+uploads/c99.php
+uploads/cmd.php
+uploads/up.php
+images/shell.php
+img/shell.php
+tmp/shell.php
+files/shell.php
+media/shell.php
+wp-content/uploads/shell.php
+wp-content/plugins/backup/shell.php

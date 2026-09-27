@@ -20,7 +20,18 @@ from agents.service_tester.agent import ServiceTesterAgent, ToolSpec
 from audit.log import AuditLogger
 from orchestrator.state import RunState, ServiceFinding, ServiceTarget
 from scope.models import ScopeRecord, TestCategory
-from tools import content_discovery, curl, cve_lookup, http_headers, nikto, nmap, nuclei, passive_recon, tls
+from tools import (
+    content_discovery,
+    curl,
+    cve_lookup,
+    http_headers,
+    nikto,
+    nmap,
+    nuclei,
+    passive_recon,
+    tls,
+    webshell,
+)
 from tools.base import ToolExecutor
 
 logger = logging.getLogger(__name__)
@@ -205,6 +216,20 @@ def _build_service_tool_specs(
             )
         )
 
+    if scope_record.category_allowed(TestCategory.WEBSHELL_SCAN) and is_http:
+        specs.append(
+            ToolSpec(
+                name="scan_php_webshells",
+                description=(
+                    f"Hunt {scheme}://{target}:{port}/ for already-installed PHP web backdoors "
+                    "(c99/r57/WSO/b374k etc.): probe known shell paths and fingerprint the "
+                    "response bodies to validate whether a live shell is present."
+                ),
+                category=TestCategory.WEBSHELL_SCAN.value,
+                handler=lambda: _webshell_text(executor, target, port, scheme),
+            )
+        )
+
     return specs
 
 
@@ -274,6 +299,17 @@ async def _content_discovery_text(executor: ToolExecutor, target: str, port: int
         return f"content discovery: no listed paths responded on {scheme}://{target}:{port}/."
     lines = [f"Discovered paths on {scheme}://{target}:{port}/:"]
     lines.extend(f"- /{p.path} -> {p.status} ({p.length} bytes)" for p in found)
+    return "\n".join(lines)
+
+
+async def _webshell_text(executor: ToolExecutor, target: str, port: int, scheme: str) -> str:
+    detections = await webshell.scan(executor, target, port, scheme=scheme)
+    if not detections:
+        return f"webshell scan: no known backdoor paths responded on {scheme}://{target}:{port}/."
+    lines = [f"Possible web backdoors on {scheme}://{target}:{port}/:"]
+    for d in detections:
+        sigs = f" signatures: {', '.join(d.matched_signatures)}" if d.matched_signatures else " (no body signature matched -- suspicious path only)"
+        lines.append(f"- [{d.confidence.value}] /{d.path} -> {d.status}{sigs}")
     return "\n".join(lines)
 
 
