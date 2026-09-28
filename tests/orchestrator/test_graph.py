@@ -7,6 +7,7 @@ from llm.client import ChatResult, ToolCall
 from orchestrator import graph as scan_graph
 from orchestrator.state import Finding, Severity
 from scope.models import AuthorizationArtifact, ScopeRecord, ScopeTarget, TestCategory, TimeWindow
+from tools.config import ToolTimeouts
 from tools.nmap import OpenPort
 from tools.rate_limit import RateLimiter
 
@@ -44,6 +45,7 @@ def _base_state(scope_record: ScopeRecord, **overrides) -> dict:
         "report": None,
         "tool_semaphore": asyncio.Semaphore(5),
         "rate_limiter": RateLimiter(requests_per_second=None),
+        "tool_timeouts": ToolTimeouts(),
         "llm_client": None,
     }
     state.update(overrides)

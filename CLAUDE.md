@@ -42,10 +42,6 @@ product depends on.
   product other people will run against infrastructure they may not fully
   understand the blast radius of.
 
-If you (Claude Code) are ever asked to add a feature that would let scope
-enforcement be bypassed, silently widened, or made optional "for testing,"
-flag it explicitly rather than just implementing it.
-
 ## Tech stack
 
 - **Python** package/env management: `uv` (`uv sync`, `uv run`, `uv add`).

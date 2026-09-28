@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from llm.client import LLMClient
 from scope.models import ScopeRecord
+from tools.config import ToolTimeouts
 from tools.rate_limit import RateLimiter
 
 
@@ -61,6 +62,9 @@ class RunState(TypedDict):
     # scan profile's concurrency cap and rate limit are actually enforced.
     tool_semaphore: Semaphore
     rate_limiter: RateLimiter
+    # Per-tool subprocess timeouts (config/tools.yaml), shared across every
+    # ToolExecutor in the run -- see tools.config.load_tool_timeouts.
+    tool_timeouts: ToolTimeouts
     # One LLMClient shared across every branch -- its internal semaphore is
     # what actually bounds concurrent LM Studio requests, so constructing a
     # fresh client per branch would defeat that (see CLAUDE.md "LM Studio

@@ -27,6 +27,16 @@ class TestCategory(str, Enum):
     # reason as content_discovery: a scope record can enable a vuln scan
     # without also enabling a backdoor sweep.
     WEBSHELL_SCAN = "webshell_scan"
+    # Active exploitation via Metasploit -- the most invasive categories in
+    # the repo, kept split so a scope record can allow Metasploit's auxiliary
+    # scanners without also authorizing exploit modules. Neither is enabled by
+    # any default scan profile; both are opt-in (see config/scan_profiles.yaml
+    # `active_exploit`). AUX_SCAN covers `auxiliary/` modules (scanners/
+    # verification); EXPLOIT covers `exploit/` modules (actually firing an
+    # exploit). See tools/metasploit.py for how the category is derived from
+    # the module family and enforced.
+    AUX_SCAN = "aux_scan"
+    EXPLOIT = "exploit"
 
 
 class AuthorizationArtifact(BaseModel):

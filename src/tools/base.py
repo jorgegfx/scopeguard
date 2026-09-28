@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from audit.log import AuditLogger
 from scope.checker import authorize
 from scope.models import ScopeRecord, TestCategory
+from tools.config import ToolTimeouts
 from tools.rate_limit import RateLimiter
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class ToolExecutor:
         branch_id: str | None = None,
         semaphore: asyncio.Semaphore | None = None,
         rate_limiter: RateLimiter | None = None,
+        tool_timeouts: ToolTimeouts | None = None,
     ):
         self._scope_record = scope_record
         self._audit_logger = audit_logger
@@ -48,6 +50,14 @@ class ToolExecutor:
         # see orchestrator.run.start_run.
         self._semaphore = semaphore or asyncio.Semaphore(1_000_000)
         self._rate_limiter = rate_limiter or RateLimiter(requests_per_second=None)
+        # Built-in per-tool budgets when none injected (see tools.config).
+        self._tool_timeouts = tool_timeouts or ToolTimeouts()
+
+    def timeout_for(self, tool: str) -> float:
+        """Configured subprocess timeout (seconds) for a named tool, from
+        config/tools.yaml -- tool functions pass this to run() instead of
+        hardcoding a constant."""
+        return self._tool_timeouts.for_tool(tool)
 
     async def run(self, target: str, category: TestCategory, command: list[str], timeout: float = 120.0) -> ToolResult:
         # Re-validated on every call -- fan-out branches must not be able to

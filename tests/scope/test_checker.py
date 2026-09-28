@@ -67,6 +67,34 @@ def test_hostname_target_matches_exactly(audit_logger):
     assert decision.allowed
 
 
+def test_refuses_exploit_category_by_default(audit_logger):
+    # A record that only allows recon must not permit Metasploit exploitation
+    # just because the target and time window line up.
+    record = _scope_record()
+    with pytest.raises(ScopeViolation):
+        authorize(record, "10.0.0.5", TestCategory.EXPLOIT, audit_logger)
+
+
+def test_refuses_aux_scan_category_by_default(audit_logger):
+    record = _scope_record()
+    with pytest.raises(ScopeViolation):
+        authorize(record, "10.0.0.5", TestCategory.AUX_SCAN, audit_logger)
+
+
+def test_aux_scan_authorization_does_not_grant_exploit(audit_logger):
+    # The split between the two Metasploit categories must hold at the gate:
+    # authorizing auxiliary scanning is not authorization to fire exploits.
+    record = _scope_record(allowed_categories=[TestCategory.AUX_SCAN])
+    assert authorize(record, "10.0.0.5", TestCategory.AUX_SCAN, audit_logger).allowed
+    with pytest.raises(ScopeViolation):
+        authorize(record, "10.0.0.5", TestCategory.EXPLOIT, audit_logger)
+
+
+def test_allows_exploit_when_explicitly_authorized(audit_logger):
+    record = _scope_record(allowed_categories=[TestCategory.EXPLOIT])
+    assert authorize(record, "10.0.0.5", TestCategory.EXPLOIT, audit_logger).allowed
+
+
 def test_every_decision_is_logged(audit_logger, tmp_path):
     record = _scope_record()
     with pytest.raises(ScopeViolation):

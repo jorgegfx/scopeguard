@@ -16,6 +16,7 @@ from llm.client import LLMClient
 from orchestrator.graph import build_graph
 from orchestrator.profiles import load_scan_profile
 from scope.loader import load_scope_record
+from tools.config import load_tool_timeouts
 from tools.rate_limit import RateLimiter
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ async def start_run(scope_record_path: str, profile_name: str = "recon_only") ->
     run_id = str(uuid.uuid4())
     scope_record = load_scope_record(scope_record_path)
     scan_profile = load_scan_profile(profile_name)
+    tool_timeouts = load_tool_timeouts()
     audit_logger = AuditLogger(run_id=run_id)
     # Constructed once and shared across every branch -- see RunState.llm_client.
     llm_client = LLMClient()
@@ -51,6 +53,7 @@ async def start_run(scope_record_path: str, profile_name: str = "recon_only") ->
             "report": None,
             "tool_semaphore": asyncio.Semaphore(scan_profile.max_concurrent_branches),
             "rate_limiter": RateLimiter(requests_per_second=scan_profile.rate_limit_per_target_rps),
+            "tool_timeouts": tool_timeouts,
             "llm_client": llm_client,
         }
     )

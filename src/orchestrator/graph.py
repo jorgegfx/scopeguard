@@ -56,6 +56,7 @@ async def recon_node(state: RunState) -> dict:
         branch_id="recon",
         semaphore=state["tool_semaphore"],
         rate_limiter=state["rate_limiter"],
+        tool_timeouts=state["tool_timeouts"],
     )
     agent = ReconAgent(agent_name="recon")
 
@@ -356,6 +357,7 @@ async def test_service_node(state: RunState) -> dict:
         branch_id=f"{target}:{port}",
         semaphore=state["tool_semaphore"],
         rate_limiter=state["rate_limiter"],
+        tool_timeouts=state["tool_timeouts"],
     )
 
     logger.info("test_service: [%s:%d] service=%s", target, port, service)

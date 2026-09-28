@@ -1,0 +1,19 @@
+# Per-tool subprocess timeouts, in seconds.
+#
+# These bound how long a single invocation of a scanning binary may run before
+# ToolExecutor kills it and reports the command as a failure. They are a
+# separate axis from scan_profiles.yaml: profiles govern concurrency, rate
+# limiting and allowed categories; these govern wall-clock time per command.
+#
+# `default` applies to any tool without its own entry (quick commands like
+# curl). Add a key named after the tool to override it -- nmap gets a much
+# longer budget because a single-host `-sV` run has been observed taking
+# ~785s in practice, and the default would kill it mid-scan and misreport it
+# as a recon failure.
+timeouts:
+  default: 120.0
+  nmap: 2400.0
+  # msfconsole startup plus a single module run; overrides the built-in in
+  # tools/metasploit.py. Bump if a module (e.g. a slow auxiliary scanner) is
+  # getting killed mid-run and misreported as a failure.
+  msfconsole: 900.0

@@ -21,3 +21,15 @@ active_plus_content:
   allowed_categories: ["passive_recon", "port_scan", "service_enum", "vuln_scan", "webapp_test", "webshell_scan", "content_discovery"]
   max_concurrent_branches: 2
   rate_limit_per_target_rps: 1
+
+# Opt-in exploitation profile. Metasploit modules only run when a run explicitly
+# selects this profile AND the scope record lists aux_scan / exploit in its
+# allowed_categories -- both gates must be open. Deliberately the tightest caps
+# in the file: exploitation is single-branch and slow-throttled by default so a
+# module run can't fan out into something that looks like a DoS. Keep aux_scan
+# and exploit OUT of the other profiles so they never enable by accident.
+active_exploit:
+  description: "Active exploitation via Metasploit (auxiliary + exploit modules) -- opt-in, heavily gated; requires matching scope authorization"
+  allowed_categories: ["passive_recon", "port_scan", "service_enum", "vuln_scan", "webapp_test", "webshell_scan", "content_discovery", "aux_scan", "exploit"]
+  max_concurrent_branches: 1
+  rate_limit_per_target_rps: 1
