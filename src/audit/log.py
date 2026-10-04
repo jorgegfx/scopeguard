@@ -49,3 +49,30 @@ class AuditLogger:
                 "reason": decision.reason,
             },
         )
+
+
+def read_events(
+    run_id: str, log_dir: str | Path = "audit_logs", event_type: str | None = None
+) -> list[AuditEvent]:
+    """Read back a run's audit events (optionally filtered by event_type).
+
+    Read-only: it never mutates the append-only log. Lines that fail to parse
+    are skipped rather than aborting -- a report should still render from a
+    partially-written or truncated log (e.g. a crashed run) rather than fail
+    closed on a reporting path, where fail-closed buys no safety.
+    """
+    path = Path(log_dir) / f"{run_id}.jsonl"
+    if not path.exists():
+        return []
+    events: list[AuditEvent] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = AuditEvent.model_validate_json(line)
+        except ValueError:
+            continue
+        if event_type is None or event.event_type == event_type:
+            events.append(event)
+    return events

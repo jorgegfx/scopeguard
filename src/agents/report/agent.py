@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agents.base import Agent
-from agents.report.render import render_markdown, render_pdf
+from agents.report.render import render_markdown, render_pdf, summarize_tool_usage
+from audit.log import read_events
 from orchestrator.state import ServiceFinding
 from scope.models import ScopeRecord
 
@@ -27,6 +28,7 @@ class ReportAgent(Agent):
         scope_record: ScopeRecord,
         service_findings: list[ServiceFinding],
         output_dir: str | Path = "reports",
+        audit_log_dir: str | Path = "audit_logs",
     ) -> ReportPaths:
         # run_id is the orchestrator's per-invocation ID (state["run_id"]),
         # deliberately not scope_record.run_id -- that's a user-authored
@@ -35,9 +37,19 @@ class ReportAgent(Agent):
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        markdown_path = output_dir / f"{run_id}.md"
-        markdown_path.write_text(render_markdown(run_id, scope_record, service_findings), encoding="utf-8")
+        # The audit log is the authoritative record of exactly which tools ran
+        # and with what parameters; read it back rather than trusting any
+        # per-branch state so the report's methodology matches what the
+        # scope-gated executor actually invoked.
+        tool_invocations = summarize_tool_usage(read_events(run_id, audit_log_dir))
 
-        pdf_path = render_pdf(run_id, scope_record, service_findings, output_dir / f"{run_id}.pdf")
+        markdown_path = output_dir / f"{run_id}.md"
+        markdown_path.write_text(
+            render_markdown(run_id, scope_record, service_findings, tool_invocations), encoding="utf-8"
+        )
+
+        pdf_path = render_pdf(
+            run_id, scope_record, service_findings, output_dir / f"{run_id}.pdf", tool_invocations
+        )
 
         return ReportPaths(markdown_path=markdown_path, pdf_path=pdf_path)
